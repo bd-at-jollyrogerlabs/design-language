@@ -150,6 +150,22 @@
       ;; First point comes second.
       (list (list x2 y2) (list x1 y1)))))
 
+(defun svg-right-pointed-line (x1 y1 x2 y2)
+  (if (< x2 x1)
+      (svg-right-pointed-line (x2 y2 x1 y1))
+    (concat
+     (svg-line x1 y1 x2 y2)
+     (svg-right-endpoint x2 y2)
+     )))
+
+(defun svg-down-pointed-line (x1 y1 x2 y2)
+  (if (< y2 y1)
+      (svg-down-pointed-line (x2 y2 x1 y1))
+    (concat
+     (svg-line x1 y1 x2 y2)
+     (svg-down-endpoint x2 y2)
+     )))
+
 (defun svg-pointed-line (x1 y1 x2 y2)
   (let ((ordered-list (reorder-points x1 y1 x2 y2)))
     (if (< (abs (- y1 y2)) 0.00001)
@@ -178,16 +194,6 @@
 (defun sgn (x)
   (cond ((< x 0) -1) (t 1)))
 
-;; (defun make-comparator (retriever)
-;;   (function
-;;    (lambda (hole1 hole2)
-;;      (let ((pt1 (retriever hole1))
-;;            (pt2 (retriever hole2)))
-;;        (< pt1 pt2)))))
-
-;; (defun update-func (old new)
-;;   old)
-
 (defun get-clean-buffer (name)
   (let* ((tmp (get-buffer name))
 	 (buf (if (not tmp)
@@ -207,11 +213,35 @@
       )))
 
 ;; Useful .svg constants
-(setq *svg-dotted-line* "5,5")
+(setq *svg-dotted-line* "1,2")
 
 (setq *svg-middle* "middle")
 
 (setq *svg-end* "end")
+
+;; Helper functions
+(defun svg-hole-diameter (center-x center-y radius wp-bottom)
+  (let* ((start-x (- center-x radius))
+	 (end-x (+ center-x radius))
+	 (line-y (if (> (+ center-y 15) wp-bottom)
+		     (- center-y radius 2)
+		   (+ center-y radius 2)))
+	 (text-y (if (> (+ center-y 15) wp-bottom)
+		     (- center-y radius 5)
+		   (+ center-y radius 5)))
+	 (dotted-top (if (> (+ center-y 15) wp-bottom)
+			 line-y
+		       center-y))
+	 (dotted-bottom (if (> (+ center-y 15) wp-bottom)
+			    center-y
+			  line-y))
+	 )
+    (concat
+     (svg-pointed-line start-x line-y end-x line-y)
+     (svg-line start-x dotted-top start-x dotted-bottom *svg-dotted-line*)
+     (svg-line end-x dotted-top end-x dotted-bottom *svg-dotted-line*)
+     (svg-text center-x text-y (format "%.2f" (* radius 2.0)) *svg-end*)
+     )))
 
 ;; name - Name of the design.
 ;;
@@ -254,8 +284,8 @@
 		  ;; (i.e. manufacturing tolerance is nonzero).  Note
 		  ;; that these adjustements must be spplied
 		  ;; symmetrically about the axes.
-		  (adjustment-length-x (/ (- actual-length-x expected-length-x) 2.0))
-		  (adjustment-length-y (/ (- actual-length-y expected-length-y) 2.0))
+		  ;; (adjustment-length-x (/ (- actual-length-x expected-length-x) 2.0))
+		  ;; (adjustment-length-y (/ (- actual-length-y expected-length-y) 2.0))
 		  ;; Center of the workpiece in the diagram.
 		  (wp-center-x (+ (/ actual-length-x 2.0) wp-edge-offset-x))
 		  (wp-center-y (+ (/ actual-length-y 2.0) wp-edge-offset-y))
@@ -269,6 +299,8 @@
 		   (+ wp-left actual-length-x))
 		  (wp-bottom
 		   (+ wp-top actual-length-y))
+		  (hole-list-offset-x (+ wp-right 25))
+		  (hole-list-offset-y wp-top)
 		  ;; AVL trees used to determine which points to mark with
 		  ;; lengths.
 		  (x-ordered-tree
@@ -300,14 +332,33 @@
 				   ;; coordinates.
 				   (diagram-center-y (- wp-center-y center-y))
 	      			   (radius (hole-get-radius hole))
+				   (diameter-line-y (+ diagram-center-y radius 2))
+				   (hole-name (hole-get-name hole))
 	      			   )
+			      (setq hole-list-offset-y (+ hole-list-offset-y 5))
 	      		      (concat
 			       ;; Drawing of the hole.
 	      		       (svg-circle diagram-center-x diagram-center-y
 					   radius "rgb(100%,100%,100%)")
 			       ;; Display of the name/designator of the hole.
 	      		       (svg-text (+ diagram-center-x radius) (- diagram-center-y radius)
-					 (hole-get-name hole) *svg-end*)
+					 hole-name *svg-end*)
+			       ;; Display of the diameter of the hole.
+			       ;; TODO: this should be optional here,
+			       ;; perhaps listed for some holes and
+			       ;; not for others as expressed by the
+			       ;; user.
+			       (svg-hole-diameter diagram-center-x diagram-center-y
+						  radius wp-bottom)
+			       ;; Right side display of distances by hole
+			       ;; TODO: make this into a table
+			       (svg-text hole-list-offset-x hole-list-offset-y
+					 (format "%s (%.2f, %.2f) %.2fmm diameter"
+						 hole-name
+						 (- (+ wp-center-x center-x) wp-left)
+						 (- (- wp-center-y center-y) wp-top)
+						 (* radius 2.0)))
+
 			       ;; Maybe add this hole to the set of
 			       ;; holes ordered by X-axis value.
 	      		       (if (not (avl-tree-member x-ordered-tree hole))
@@ -324,6 +375,9 @@
 	      		 (layout-get-holes layout) "")
 	      ;; Display all X-axis layout distances.
 	      "<!-- X-axis layout distances -->\n"
+	      (svg-pointed-line wp-left (+ wp-bottom 5) wp-right (+ wp-bottom 5))
+	      (svg-text (+ (/ actual-length-x 2.0) wp-left) (+ wp-bottom 7.5)
+			(format "%.2f" actual-length-x) *svg-middle*)
 	      (let ((previous-end-x wp-left)
 		    (offset-above 5)
 		    (multiplier-above 0))
@@ -338,8 +392,10 @@
 				     (text-displayed-total-distance-x
 				      (- distance-line-end-x wp-left))
 				     (text-display-x
-				      (+ distance-line-start-x
-					 (/ text-displayed-distance-x 2.0)))
+				      (if (< text-displayed-distance-x 10)
+					  (- distance-line-start-x 2)
+					(+ distance-line-start-x
+					   (/ text-displayed-distance-x 2.0))))
 				     ;; Calculate various Y-axis values.
 				     (center-y (- (hole-get-center-y hole)))
 				     (distance-line-display-y
@@ -351,7 +407,8 @@
 				(concat
 				 ;; Line with arrows at endpoints to
 				 ;; show the distance from plate left.
-				 (svg-pointed-line
+				 ;; (svg-pointed-line
+				 (svg-right-pointed-line
 				  distance-line-start-x distance-line-display-y  ;; start
 				  distance-line-end-x distance-line-display-y)   ;; end
 				 ;; Dotted lines projecting from the
@@ -365,17 +422,18 @@
 				  distance-line-end-x wp-bottom *svg-dotted-line*)
 				 ;; Text displaying the actual
 				 ;; distance from the previous
-				 ;; distance.
-				 (svg-text
-				  text-display-x
-				  (- distance-line-display-y 5)
-				  (format "%.2f" text-displayed-distance-x) *svg-end*)
+				 ;; X-axis point.
+				 ;; (svg-text
+				 ;;  text-display-x
+				 ;;  (- distance-line-display-y 5)
+				 ;;  (format "%.2f" text-displayed-distance-x) *svg-end*)
 				 ;; Text displaying the actual
 				 ;; distance from the workpiece left
 				 ;; edge.
 				 (svg-text
 				  text-display-x
-				  (- distance-line-display-y 9)
+				  ;; (- distance-line-display-y 9)
+				  (- distance-line-display-y 5)
 				  (format "%.2f" text-displayed-total-distance-x) *svg-end*)
 				 ))))
 			   (avl-tree-flatten x-ordered-tree) ""))
@@ -383,7 +441,9 @@
 	      ;; holes is reversed -> holes start at the bottom and go
 	      ;; to the top.
 	      "<!-- Y-axis layout distances -->\n"
-	      (format "<!-- Y-axis hole count %d -->\n" (length (avl-tree-flatten y-ordered-tree)))
+	      (svg-pointed-line (+ wp-right 5) wp-top (+ wp-right 5) wp-bottom)
+	      (svg-text (+ wp-right 6) (+ wp-top (/ actual-length-y 2.0))
+			(format "%.2f" actual-length-y))
 	      (let ((previous-end-y wp-top)
 		    (offset-left 5))
 		(mapconcat (function
@@ -406,7 +466,8 @@
 				(concat
 				 ;; Line with arrows at endpoints to
 				 ;; show the distance from plate top.
-				 (svg-pointed-line
+				 ;; (svg-pointed-line
+				 (svg-down-pointed-line
 				  distance-line-display-x distance-line-start-y  ;; start
 				  distance-line-display-x distance-line-end-y)   ;; end
 				 ;; Dotted lines projecting from the
@@ -418,18 +479,25 @@
 				 (svg-line
 				  distance-line-display-x distance-line-end-y
 				  wp-right distance-line-end-y *svg-dotted-line*)
-				 ;; Text displaying the actual distance
+				 ;; Text displaying the actual
+				 ;; distance from the previous
+				 ;; Y-axis point.
+				 ;; (svg-text
+				 ;;  (- distance-line-display-x 7.5)
+				 ;;  text-display-y
+				 ;;  (format "%.2f" text-displayed-distance-y) *svg-end*)
+				 ;; Text displaying the actual
+				 ;; distance from the workpiece top
+				 ;; edge.
 				 (svg-text
+				  ;; (- distance-line-display-x 20.5)
+				  ;; text-display-y
 				  (- distance-line-display-x 7.5)
-				  text-display-y
-				  (format "%.2f" text-displayed-distance-y) *svg-end*)
-				 (svg-text
-				  (- distance-line-display-x 20.5)
-				  text-display-y
+				  distance-line-end-y
 				  (format "%.2f" text-displayed-total-distance-y) *svg-end*)
 				 ))))
 			   (reverse (avl-tree-flatten y-ordered-tree)) ""))
 	      "<!-- Layout Name -->\n"
-	      (svg-text wp-center-x (+ wp-bottom 10) name *svg-middle*)
+	      (svg-text wp-center-x (+ wp-bottom 15) name *svg-middle*)
 	      (format "</svg>\n")
 	      )))))))
