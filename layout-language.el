@@ -220,7 +220,7 @@
 (setq *svg-end* "end")
 
 ;; Helper functions
-(defun svg-hole-diameter (center-x center-y radius wp-bottom)
+(defun svg-hole-diameter (center-x center-y radius wp-bottom &optional unit-conversion-factor unit-string)
   (let* ((start-x (- center-x radius))
 	 (end-x (+ center-x radius))
 	 (line-y (if (> (+ center-y 15) wp-bottom)
@@ -235,13 +235,31 @@
 	 (dotted-bottom (if (> (+ center-y 15) wp-bottom)
 			    center-y
 			  line-y))
+	 (convert-factor (if unit-conversion-factor unit-conversion-factor 1.0))
+	 (units (if unit-string unit-string "mm"))
 	 )
     (concat
      (svg-pointed-line start-x line-y end-x line-y)
      (svg-line start-x dotted-top start-x dotted-bottom *svg-dotted-line*)
      (svg-line end-x dotted-top end-x dotted-bottom *svg-dotted-line*)
-     (svg-text center-x text-y (format "%.2f" (* radius 2.0)) *svg-end*)
+     (svg-text center-x text-y (format "%.3f%s" (* (* radius 2.0) convert-factor)
+	       units) *svg-end*)
      )))
+
+;; TODO: requested features for generate-mechanical-drawing-from-layout
+;;
+;; 1. Round all values to nearest 0.5mm.  Alternatively, support
+;;    rounding policy delivered as a function by the user.
+;;
+;; 2. Specify hole diameter in a side note if all holes are the same
+;;    diameter.  If multiple holes are required, use some sort of
+;;    table display.
+;;
+;; 3. Precision should be a user policy.
+;;
+;; 4. Eventually, all unit-related stuff (i.e. units, conversion
+;;    factor, unit string, rounding policy, display precision) should
+;;    be contained in a single unit policy object.
 
 ;; name - Name of the design.
 ;;
@@ -267,34 +285,39 @@
 ;;
 ;; layout - Object representing the design to be displayed in the
 ;;          drawing.
+;;
+;; unit-conversion-factor - Factor to multiply distances by for
+;;                          display purposes.  Standard distance is
+;;                          mm, so this factor should convert from mm
+;;                          to the desired units (e.g. 0.03937 to
+;;                          convert to inches).
+;;
+;; unit-string - String used to display the units, should be
+;;               consistent with unit-conversion-factor.  Default is
+;;               "mm".
 (defun generate-mechanical-drawing-from-layout
-  (name filename actual-length-x actual-length-y wp-edge-offset-x wp-edge-offset-y layout)
-  (let ((outbuf (get-clean-buffer filename)))
+  (name filename actual-length-x actual-length-y wp-edge-offset-x wp-edge-offset-y layout &optional unit-conversion-factor unit-string)
+  (let ((outbuf (get-clean-buffer filename))
+	(convert-factor (if unit-conversion-factor unit-conversion-factor 1.0))
+	(units (if unit-string unit-string "mm"))
+	)
     (if outbuf
 	(progn
 	  (set-window-buffer (selected-window) outbuf)
 	  ;; outbuf should be empty at this point
 	  (insert
-	   (let* (;; Expected 2D lengths of the plate, as defined in the layout.
+	   (let* (;; Expected 2D lengths of the workpiece, as defined in the layout.
 		  (expected-length-x (layout-get-expected-length-x layout))
 		  (expected-length-y (layout-get-expected-length-y layout))
-		  ;; Adjustments to lengths due to the fact that
-		  ;; actual dimensions of a fabricated plate are not
-		  ;; the same as expected dimensions
-		  ;; (i.e. manufacturing tolerance is nonzero).  Note
-		  ;; that these adjustements must be spplied
-		  ;; symmetrically about the axes.
-		  ;; (adjustment-length-x (/ (- actual-length-x expected-length-x) 2.0))
-		  ;; (adjustment-length-y (/ (- actual-length-y expected-length-y) 2.0))
 		  ;; Center of the workpiece in the diagram.
 		  (wp-center-x (+ (/ actual-length-x 2.0) wp-edge-offset-x))
 		  (wp-center-y (+ (/ actual-length-y 2.0) wp-edge-offset-y))
-		  ;; Calculated left + top of the plate
+		  ;; Calculated left + top of the workpiece
 		  (wp-left
 		   (- wp-center-x (/ actual-length-x 2.0)))
 		  (wp-top
 		   (- wp-center-y (/ actual-length-y 2.0)))
-		  ;; Calculated right + bottom of the plate
+		  ;; Calculated right + bottom of the workpiece
 		  (wp-right
 		   (+ wp-left actual-length-x))
 		  (wp-bottom
@@ -344,20 +367,19 @@
 	      		       (svg-text (+ diagram-center-x radius) (- diagram-center-y radius)
 					 hole-name *svg-end*)
 			       ;; Display of the diameter of the hole.
-			       ;; TODO: this should be optional here,
-			       ;; perhaps listed for some holes and
-			       ;; not for others as expressed by the
-			       ;; user.
 			       (svg-hole-diameter diagram-center-x diagram-center-y
-						  radius wp-bottom)
+						  radius wp-bottom convert-factor units)
 			       ;; Right side display of distances by hole
-			       ;; TODO: make this into a table
 			       (svg-text hole-list-offset-x hole-list-offset-y
-					 (format "%s (%.2f, %.2f) %.2fmm diameter"
+					 (format "%s (%.3f, %.3f) %.3f%s diameter"
 						 hole-name
-						 (- (+ wp-center-x center-x) wp-left)
-						 (- (- wp-center-y center-y) wp-top)
-						 (* radius 2.0)))
+						 (* (- (+ wp-center-x center-x) wp-left)
+						    convert-factor)
+						 (* (- (- wp-center-y center-y) wp-top)
+						    convert-factor)
+						 (* (* radius 2.0) convert-factor)
+						 units
+						 ))
 
 			       ;; Maybe add this hole to the set of
 			       ;; holes ordered by X-axis value.
@@ -377,7 +399,8 @@
 	      "<!-- X-axis layout distances -->\n"
 	      (svg-pointed-line wp-left (+ wp-bottom 5) wp-right (+ wp-bottom 5))
 	      (svg-text (+ (/ actual-length-x 2.0) wp-left) (+ wp-bottom 7.5)
-			(format "%.2f" actual-length-x) *svg-middle*)
+			(format "%.3f%s" (* actual-length-x convert-factor) units)
+			*svg-middle*)
 	      (let ((previous-end-x wp-left)
 		    (offset-above 5)
 		    (multiplier-above 0))
@@ -406,14 +429,13 @@
 				(setq multiplier-above (if (= 0 multiplier-above) 1 0))
 				(concat
 				 ;; Line with arrows at endpoints to
-				 ;; show the distance from plate left.
-				 ;; (svg-pointed-line
+				 ;; show the distance from workpiece left.
 				 (svg-right-pointed-line
 				  distance-line-start-x distance-line-display-y  ;; start
 				  distance-line-end-x distance-line-display-y)   ;; end
 				 ;; Dotted lines projecting from the
 				 ;; "pointed" distance lines all the
-				 ;; way down through the plate.
+				 ;; way down through the workpiece.
 				 (svg-line
 				  distance-line-start-x distance-line-display-y
 				  distance-line-start-x wp-bottom *svg-dotted-line*)
@@ -421,20 +443,14 @@
 				  distance-line-end-x distance-line-display-y
 				  distance-line-end-x wp-bottom *svg-dotted-line*)
 				 ;; Text displaying the actual
-				 ;; distance from the previous
-				 ;; X-axis point.
-				 ;; (svg-text
-				 ;;  text-display-x
-				 ;;  (- distance-line-display-y 5)
-				 ;;  (format "%.2f" text-displayed-distance-x) *svg-end*)
-				 ;; Text displaying the actual
 				 ;; distance from the workpiece left
 				 ;; edge.
 				 (svg-text
 				  text-display-x
-				  ;; (- distance-line-display-y 9)
 				  (- distance-line-display-y 5)
-				  (format "%.2f" text-displayed-total-distance-x) *svg-end*)
+				  (format "%.3f%s" (* text-displayed-total-distance-x
+						      convert-factor)
+					  units) *svg-end*)
 				 ))))
 			   (avl-tree-flatten x-ordered-tree) ""))
 	      ;; Display all Y-axis layout distances.  NOTE: order of
@@ -443,7 +459,7 @@
 	      "<!-- Y-axis layout distances -->\n"
 	      (svg-pointed-line (+ wp-right 5) wp-top (+ wp-right 5) wp-bottom)
 	      (svg-text (+ wp-right 6) (+ wp-top (/ actual-length-y 2.0))
-			(format "%.2f" actual-length-y))
+			(format "%.3f%s" (* actual-length-y convert-factor) units))
 	      (let ((previous-end-y wp-top)
 		    (offset-left 5))
 		(mapconcat (function
@@ -465,14 +481,13 @@
 				(setq previous-end-y distance-line-end-y)
 				(concat
 				 ;; Line with arrows at endpoints to
-				 ;; show the distance from plate top.
-				 ;; (svg-pointed-line
+				 ;; show the distance from workpiece top.
 				 (svg-down-pointed-line
 				  distance-line-display-x distance-line-start-y  ;; start
 				  distance-line-display-x distance-line-end-y)   ;; end
 				 ;; Dotted lines projecting from the
 				 ;; "pointed" distance lines all the
-				 ;; way across through the plate.
+				 ;; way across through the workpiece.
 				 (svg-line
 				  distance-line-display-x distance-line-start-y
 				  wp-right distance-line-start-y *svg-dotted-line*)
@@ -480,22 +495,18 @@
 				  distance-line-display-x distance-line-end-y
 				  wp-right distance-line-end-y *svg-dotted-line*)
 				 ;; Text displaying the actual
-				 ;; distance from the previous
-				 ;; Y-axis point.
-				 ;; (svg-text
-				 ;;  (- distance-line-display-x 7.5)
-				 ;;  text-display-y
-				 ;;  (format "%.2f" text-displayed-distance-y) *svg-end*)
-				 ;; Text displaying the actual
 				 ;; distance from the workpiece top
 				 ;; edge.
 				 (svg-text
-				  ;; (- distance-line-display-x 20.5)
-				  ;; text-display-y
 				  (- distance-line-display-x 7.5)
 				  distance-line-end-y
-				  (format "%.2f" text-displayed-total-distance-y) *svg-end*)
+				  (format "%.3f%s" (* text-displayed-total-distance-y
+						      convert-factor)
+					  units) *svg-end*)
 				 ))))
+			   ;; NOTE: reversing the order of the holes
+			   ;; here to accommodate the calculation of
+			   ;; distances from the top of the workpiece.
 			   (reverse (avl-tree-flatten y-ordered-tree)) ""))
 	      "<!-- Layout Name -->\n"
 	      (svg-text wp-center-x (+ wp-bottom 15) name *svg-middle*)
